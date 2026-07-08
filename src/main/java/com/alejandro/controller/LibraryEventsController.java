@@ -3,6 +3,8 @@ package com.alejandro.controller;
 import com.alejandro.config.AppConstants;
 import com.alejandro.domain.LibraryEvent;
 import com.alejandro.domain.LibraryEventType;
+import com.alejandro.service.LibraryEventService;
+import com.alejandro.controller.LibraryEventsControllerAdvice.ErrorResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -31,7 +33,12 @@ public class LibraryEventsController {
             return CompletableFuture.completedFuture(
                     ResponseEntity
                             .status(HttpStatus.BAD_REQUEST)
-                            .body(new LibraryEventsControllerAdvice.ErrorResponse(List.of("only ADD event type is supported"))));
+                            .body(new ErrorResponse(List.of("only ADD event type is supported"))));
         }
+
+        return libraryEventService.createLibraryEvent(libraryEvent)
+                .thenApply(created -> ResponseEntity
+                        .status(HttpStatus.CREATED)
+                        .body(created));
     }
 }
