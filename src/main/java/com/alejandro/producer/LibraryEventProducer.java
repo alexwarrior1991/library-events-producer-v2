@@ -187,6 +187,72 @@ public class LibraryEventProducer {
         });
     }
 
+    /**
+     * Publishes {@code libraryEvent} to the configured Kafka topic <em>synchronously</em> within a transactional context.
+     *
+     * <p>This method is annotated with {@code @Transactional} and combines the benefits of
+     * synchronous send confirmation with transaction management. The calling thread will block
+     * until the broker acknowledgement is received or a timeout/error occurs, all within the
+     * context of a managed transaction.
+     *
+     * @param libraryEvent the event to publish; its {@code libraryEventId} is used as the message key
+     * @return the {@link SendResult} containing broker metadata for the published record
+     * @throws LibraryEventPublishException if the send fails, times out, or the thread is interrupted
+     */
+    @Transactional
+    public SendResult<Long, LibraryEvent> sendLibraryEventSynchronousTransactional(LibraryEvent libraryEvent) {
+        Long key = libraryEvent.libraryEventId();
+
+        if (isTransactionBook(libraryEvent)) {
+            log.info("Transaction scenario detected for key={}; sending same event 3 times synchronously before forcing failure", key);
+            try {
+                for (int i = 1; i <= 3; i++) {
+                    kafkaTemplate.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
+                    log.info("Transaction scenario synchronous send attempt {} completed for key={}", i, key);
+                }
+            } catch (ExecutionException ex) {
+                throw new LibraryEventPublishException("Failed during transaction scenario synchronous publish", ex);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new LibraryEventPublishException("Interrupted during transaction scenario synchronous publish", ex);
+            } catch (TimeoutException ex) {
+                throw new LibraryEventPublishException("Timed out during transaction scenario synchronous publish", ex);
+            }
+
+            throw new RuntimeException(
+                    "Forced rollback after publishing the same LibraryEvent 3 times for transaction scenario");
+        }
+
+        log.info("Sending LibraryEvent synchronously and transactionally to topic={}, key={}, eventType={}",
+                topic, key, libraryEvent.eventType());
+
+        try {
+            SendResult<Long, LibraryEvent> result = kafkaTemplate.send(topic, key, libraryEvent)
+                    .get(3, TimeUnit.SECONDS);
+
+            var metadata = result.getRecordMetadata();
+            log.info("Published LibraryEvent synchronously and transactionally | topic={}, partition={}, offset={}, key={}",
+                    metadata.topic(), metadata.partition(), metadata.offset(), key);
+
+            return result;
+        } catch (ExecutionException ex) {
+            log.error("Failed to publish LibraryEvent synchronously and transactionally | topic={}, key={}, error={}",
+                    topic, key, ex.getMessage(), ex);
+            throw new LibraryEventPublishException("Failed to publish LibraryEvent synchronously and transactionally", ex);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            log.error("Interrupted while publishing LibraryEvent synchronously and transactionally | topic={}, key={}", topic, key);
+            throw new LibraryEventPublishException("Interrupted while publishing LibraryEvent synchronously and transactionally", ex);
+        } catch (TimeoutException ex) {
+            log.error("Timed out while publishing LibraryEvent synchronously and transactionally | topic={}, key={}", topic, key);
+            throw new LibraryEventPublishException("Timed out while publishing LibraryEvent synchronously and transactionally", ex);
+        } catch (Exception e) {
+            log.error("Unexpected error while publishing LibraryEvent synchronously and transactionally | topic={}, key={}, error={}",
+                    topic, key, e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
+    }
+
 
     public CompletableFuture<Void> sendLibraryEventsInSingleTransactionAsync(LibraryEvent libraryEvent) {
         Long key = libraryEvent.libraryEventId();
