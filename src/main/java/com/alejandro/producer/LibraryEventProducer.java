@@ -1,7 +1,10 @@
 package com.alejandro.producer;
 
 import com.alejandro.domain.LibraryEvent;
+import com.alejandro.domain.LibraryEventType;
 import com.alejandro.exception.LibraryEventPublishException;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,6 +13,8 @@ import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -301,12 +306,64 @@ public class LibraryEventProducer {
                 });
     }
 
+    public CompletableFuture<SendResult<Long, LibraryEvent>> sendLibraryEventRecord(LibraryEvent libraryEvent) {
+        Long key = libraryEvent.libraryEventId();
+
+        ProducerRecord<Long, LibraryEvent> producerRecord = buildProducerRecord(key, libraryEvent);
+
+        return kafkaTemplate.send(producerRecord)
+                .whenComplete((sendResult, exception) -> {
+                    if (exception != null) {
+                        log.error(
+                                "Failed to send library event. key={}, eventType={}, topic={}",
+                                key,
+                                libraryEvent.eventType(),
+                                topic,
+                                exception
+                        );
+                        return;
+                    }
+
+                    var metadata = sendResult.getRecordMetadata();
+
+                    log.info(
+                            "Library event sent successfully. key={}, eventType={}, topic={}, partition={}, offset={}, timestamp={}",
+                            key,
+                            libraryEvent.eventType(),
+                            metadata.topic(),
+                            metadata.partition(),
+                            metadata.offset(),
+                            metadata.timestamp()
+                    );
+                });
+    }
+
 
     private boolean isTransactionBook(LibraryEvent libraryEvent) {
         return libraryEvent != null
                 && libraryEvent.book() != null
                 && libraryEvent.book().bookName() != null
                 && TRANSACTION_BOOK_NAME.equalsIgnoreCase(libraryEvent.book().bookName().trim());
+    }
+
+    private ProducerRecord<Long, LibraryEvent> buildProducerRecord(Long key, LibraryEvent libraryEvent) {
+        ProducerRecord<Long, LibraryEvent> producerRecord = new ProducerRecord<>(
+                topic,
+                key,
+                libraryEvent
+        );
+
+        producerRecord.headers().add(new RecordHeader(
+                "event-type",
+                libraryEvent.eventType().name().getBytes(StandardCharsets.UTF_8)
+        ));
+
+        producerRecord.headers().add(new RecordHeader(
+                "event-created-at",
+                Instant.now().toString().getBytes(StandardCharsets.UTF_8)
+        ));
+
+        return producerRecord;
     }
 
 }
